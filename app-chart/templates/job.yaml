@@ -1,0 +1,35 @@
+{{- range .Values.jobServices }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .name }}-job
+spec:
+  completions: 1
+  backoffLimit: 5
+  activeDeadlineSeconds: 200
+  ttlSecondsAfterFinished: 30
+  template:
+    metadata:
+      name: {{ .name }}-pod
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-db
+          image: busybox:musl
+          command:
+            - "sh"
+            - "-c"
+            - "until nc -z -v -w3 {{ .dbHost }} {{ .dbPort }}; do echo 'Waiting for Database...'; sleep 2; done"
+      containers:
+        - name: {{ .name }}-tool
+          image: "{{ .image }}:{{ index $.Values.versions .version}}"
+          command: {{ .command }}
+          envFrom:
+          - secretRef:
+              name: {{ .secretName  }}
+            {{- if .configName}}
+          - configMapRef:
+              name: {{ .configName}}
+          {{- end }}
+---
+{{- end }}

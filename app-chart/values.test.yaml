@@ -1,0 +1,138 @@
+versions:
+  authUserVersion: "v1"
+  budgetPlannerVersion: "v1"
+  notificationVersion: "v1"
+  gatewayDocsVersion: "v1"
+  defaultVersion: "v1"
+replicasCount:
+  authReplicas: 3
+  budgetReplicas: 3
+  notificationReplicas: 3
+  docsReplicas: 1
+  defaultReplicas: 3
+microservices:
+  - name : app-auth-user
+    image : "dmitriysyworov/auth-user-service"
+    ingressPaths:
+      - /api/v1/register
+      - /api/v1/login
+      - /api/v1/recovery
+      - /api/v1/refresh
+      - /api/v1/logout
+      - /api/v1/confirm
+      - /api/v1/user
+    type: NodePort
+    port: 80
+    nodePort: 32000
+    version: "authUserVersion"
+    replicas: "authReplicas"
+    checkLivenessProbe: true
+    secretName: "auth-user-all-secrets"
+    configName: "auth-user-all-configs"
+  - name : gateway-docs
+    image : "dmitriysyworov/gateway-docs"
+    ingressPaths:
+      - /api/v1/docs
+      - /swagger
+    isSecurityService: true
+    type: NodePort
+    port: 80
+    nodePort: 32002
+    version: "gatewayDocsVersion"
+    replicas: "docsReplicas"
+    secretName: "gateway-docs-all-secrets"
+    configName: "gateway-docs-all-configs"
+  - name : notification
+    image : "dmitriysyworov/notification"
+    type: ClusterIP
+    port: 80
+    version: "notificationVersion"
+    replicas: "notificationReplicas"
+    secretName: "notification-all-secrets"
+    configName: "notification-all-configs"
+statefulServices:
+  - name: postgres-user
+    image: "postgres:18-alpine"
+    port: 5432
+    replicas: 1
+    storageSize: "1Gi"
+    mountPath: "/var/lib/postgresql/18/docker"
+    isLocal: true
+    secretName: "postgres-auth-user-all-secrets"
+    configName: "postgres-auth-user-all-configs"
+  - name : redis-auth
+    image: "redis:8-alpine"
+    port: 6379
+    replicas: 1
+    storageSize: "1Gi"
+    mountPath: "/data"
+    isLocal: true
+    isRedis : true
+    secretName: "redis-auth-user-all-secrets"
+    configName: "redis-auth-user-all-configs"
+cronJobServices:
+  - name: clean-user
+    start: "0 2 * * *"
+    image: "dmitriysyworov/auth-user-service"
+    command: [ "./croncleaner" ]
+    version: "authUserVersion"
+    secretName: "auth-user-all-secrets"
+    configName: "auth-user-all-configs"
+jobServices:
+  - name: migrations-user
+    image: "dmitriysyworov/auth-user-service"
+    command: [ "./migrator" ]
+    dbHost: "postgres-user-service"
+    dbPort: 5432
+    version: "authUserVersion"
+    secretName: "auth-user-all-secrets"
+    configName: "auth-user-all-configs"
+configs:
+  auth-user-all-configs:
+    EXTERNAL_API_PORT: '8080'
+    SERVICE_IP: 'app-auth-user-service'
+    REDIS_ADDRESS: 'redis-auth-service:6379'
+    KAFKA_BOOTSTRAP: "my-kafka-chart.infrastructure:9092"
+    POSTGRES_DB: 'user'
+    DELETED_USERS_TOPIC: "deleted-users-topic"
+    NOTIFICATION_TOPIC: "notification-topic"
+    SHARED_REDIS_ADDRESS: 'redis-shared-service.infrastructure:6379'
+  gateway-docs-all-configs:
+    AUTH_USER_URL: 'http://app-auth-user-service:80'
+    REALM_NAME_AUTH: 'Authentication Required - Swagger UI'
+    EXTERNAL_API_PORT: '8080'
+  notification-all-configs:
+    EXTERNAL_API_PORT: '8080'
+    SMTP_ADDRESS: 'smtp.gmail.com'
+    SMTP_ADDRESS_HOST: 'smtp.gmail.com:587'
+    KAFKA_BOOTSTRAP: "my-kafka-chart.infrastructure:9092"
+    NOTIFICATION_TOPIC: "notification-topic"
+    NOTIFICATION_GROUP_ID: "notification-group-id"
+    SHARED_REDIS_ADDRESS: 'redis-shared-service.infrastructure:6379'
+  postgres-auth-user-all-configs:
+    POSTGRES_DB: 'user'
+  redis-auth-user-all-configs:
+    REDIS_ADDRESS: 'redis-auth-service:6379'
+secrets:
+  gateway-docs-all-secrets:
+    auth: 'admin-swagger:$apr1$bvNouVnC$WoCp45k7vmWAGp413JaOL.' #example_password
+  auth-user-all-secrets:
+    DSN: 'host=postgres-user-service user=admin-auth password=example_password dbname=user port=5432 sslmode=disable'
+    JWT_SIGNATURE:  '*.01?Ue)p6]H=|C:o-.2z%5R^]@}:r9E_&k#4LC(bOR'
+    POSTGRES_USER: 'admin-auth'
+    POSTGRES_PASSWORD: 'example_password'
+    REDIS_PASSWORD: 'qwjaozjwn123Q@RED'
+    KAFKA_CLIENT_USER: "user1"
+    KAFKA_CLIENT_PASSWORD: "example_password"
+    SHARED_REDIS_PASSWORD:  'example_password'
+  notification-all-secrets:
+    API_EMAIL: 'example@gmail.com'
+    API_PASSWORD: 'example_password'
+    KAFKA_CLIENT_USER: "user1"
+    KAFKA_CLIENT_PASSWORD: "example_password"
+    SHARED_REDIS_PASSWORD: 'example_password'
+  postgres-auth-user-all-secrets:
+    POSTGRES_USER: 'admin-auth'
+    POSTGRES_PASSWORD: 'example_password'
+  redis-auth-user-all-secrets:
+    REDIS_PASSWORD: 'example_password'

@@ -1,0 +1,32 @@
+{{- range .Values.microservices }}
+{{ $outside := . }}
+{{- if .ingressPaths }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .name }}-ingress
+  {{- if $outside.isSecurityService}}
+  annotations:
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: {{ $outside.secretName | quote}}
+    nginx.ingress.kubernetes.io/auth-realm:  {{ index $.Values.configs $outside.configName "REALM_NAME_AUTH" | quote}}
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "10"
+  {{- end}}
+spec:
+  ingressClassName: nginx
+  rules:
+     - http:
+        paths:
+          {{- range $outside.ingressPaths }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $outside.name }}-service
+                port:
+                  number: {{ index $.Values.configs $outside.configName "EXTERNAL_API_PORT" }}
+          {{- end }}
+---
+{{- end }}
+{{- end }}

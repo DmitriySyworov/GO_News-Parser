@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+option go_package = "shared/shprotos/event;event";
+
+package event;
+
+message NotificationEvent {
+  oneof event {
+    AuthLetterPayload auth_code = 1;
+    SecurityLetterPayload  new_device = 2;
+    SecurityLetterPayload security_alert = 3;
+  }
+  string EmailTo = 5;
+  string EventUUID = 6;
+}
+
+message AuthLetterPayload {
+  int64 ValidTime = 1;
+  string Code = 2;
+}
+
+message SecurityLetterPayload   {
+  string device = 1;
+  string client_ip = 2;
+  string current_time = 3;
+}

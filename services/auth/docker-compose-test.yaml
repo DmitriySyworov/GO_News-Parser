@@ -1,0 +1,65 @@
+services:
+  postgres-user-test:
+    container_name: postgres-user-test
+    image: postgres:latest
+    ports:
+      - "${EXTERNAL_POSTGRES_PORT}:5432"
+    environment:
+      POSTGRES_USER : ${POSTGRES_USER}
+      POSTGRES_PASSWORD : ${POSTGRES_PASSWORD}
+      POSTGRES_DB : ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      timeout: 5s
+      interval: 5s
+      retries: 5
+  redis-auth-test:
+    container_name: redis-auth-test
+    image: redis:latest
+    ports:
+      - "${EXTERNAL_REDIS_PORT}:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis-shared-test:
+    container_name: redis-shared
+    image: redis:8.10-rc2-alpine3.23
+    ports:
+      - "${EXTERNAL_SHARED_REDIS_PORT}:6379"
+    command: redis-server --requirepass ${SHARED_REDIS_PASSWORD}
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${SHARED_REDIS_PASSWORD}", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+  migration-user-test:
+    container_name: migration-auth-user-test
+    build:
+      context: ../../
+      dockerfile: ./services/auth/Dockerfile
+    entrypoint: ["./migrator"]
+    environment:
+      DSN : ${DSN_TEST_MIGRATION}
+    restart: "no"
+    depends_on:
+      postgres-user-test:
+        condition: service_healthy
+  notification-test:
+    container_name: notification-test
+    build:
+      context: ../../
+      dockerfile: ./services/notification/Dockerfile
+    environment:
+      DSN : ${DSN_TEST_MIGRATION}
+    depends_on:
+      postgres-user-test:
+        condition: service_healthy
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"

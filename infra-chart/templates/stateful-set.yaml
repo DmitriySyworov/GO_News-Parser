@@ -1,0 +1,51 @@
+{{- range .Values.statefulServices }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .name }}
+spec:
+  serviceName: {{ .name }}-service
+  replicas: {{ .replicas }}
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+    spec:
+      containers:
+        - name: {{ .name }}-container
+          image: {{ .image }}
+          {{- if .isSharedRedis }}
+          command: [ "redis-server" ]
+          args: [ "--requirepass", "$(SHARED_REDIS_PASSWORD)", "--appendonly", "yes" ]
+          {{- end }}
+          ports:
+            - containerPort: {{ .port }}
+          envFrom:
+            - secretRef:
+                name: {{ .secretName }}
+            {{- if .configName}}
+            - configMapRef:
+                name: {{ .configName}}
+                {{- end }}
+          volumeMounts:
+            - name: data-volume
+              mountPath: {{ .mountPath }}
+           {{- if .isLocal}}
+              subPath: {{ .name }}-data
+           {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data-volume
+      spec:
+        {{- if .isLocal }}
+        storageClassName: local-storage
+        {{- end }}
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: {{ .storageSize }}
+---
+{{- end }}

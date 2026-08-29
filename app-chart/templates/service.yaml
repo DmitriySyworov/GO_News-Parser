@@ -1,0 +1,32 @@
+{{- range .Values.microservices }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}-service
+spec:
+  selector:
+    app: {{ .name }}
+  ports:
+    - protocol: TCP
+      port: {{ .port }}
+      targetPort: {{ index $.Values.configs .configName "EXTERNAL_API_PORT" }}
+  type: {{ .type | default "ClusterIP" }}
+---
+{{- end }}
+
+{{- range .Values.statefulServices }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}-service
+spec:
+  clusterIP: None
+  selector:
+    app: {{ .name }}
+  ports:
+    - protocol: TCP
+      port: {{ .port }}
+      targetPort: {{ .port }}
+  type: ClusterIP
+---
+{{- end }}
