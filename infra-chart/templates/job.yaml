@@ -1,0 +1,67 @@
+{{- range .Values.jobServices }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .name }}-job
+  labels:
+    app: kafka-topics-setup
+spec:
+  completions: 1
+  backoffLimit: 5
+  activeDeadlineSeconds: 200
+  ttlSecondsAfterFinished: 30
+  template:
+    metadata:
+      name: {{ .name }}-pod
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:musl
+          command:
+            - "sh"
+            - "-c"
+            - "until nc -z -v -w3 my-kafka-chart 9092; do echo 'Waiting for Kafka secure port...'; sleep 2; done"
+      containers:
+        - name: {{ .name }}-tool
+          image: {{ .image }}
+          command:
+            - "sh"
+            - "-c"
+            - |
+              echo "=== Step 1: Generating client properties ==="
+              cat << 'EOF' > /tmp/client.properties
+              security.protocol=SASL_PLAINTEXT
+              sasl.mechanism=SCRAM-SHA-256
+              EOF
+
+              echo "sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"$KAFKA_CLIENT_USER\" password=\"$KAFKA_CLIENT_PASSWORD\";" >> /tmp/client.properties
+
+              kafka-topics.sh --bootstrap-server {{ .bootstrapServer }} \
+                --command-config /tmp/client.properties \
+                --create --if-not-exists \
+                --topic "__consumer_offsets" \
+                --partitions 1 \
+                --replication-factor 1 \
+                --config cleanup.policy=compact \
+                --config segment.bytes=104857600
+
+              {{- $outsideJob := . }}
+              {{- range .topics }}
+              kafka-topics.sh --bootstrap-server {{ $outsideJob.bootstrapServer }} \
+                --command-config /tmp/client.properties \
+                --create --if-not-exists \
+                --topic {{ .name }} \
+                --partitions {{ .partitions }} \
+                --replication-factor 1
+              {{- end }}
+              rm -f /tmp/client.properties
+          envFrom:
+            - secretRef:
+                name: {{ .secretName  }}
+            {{- if .configName}}
+            - configMapRef:
+                name: {{ .configName}}
+          {{- end }}
+---
+{{- end }}

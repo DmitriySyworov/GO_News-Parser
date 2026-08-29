@@ -1,0 +1,781 @@
+basePath: /api/v1
+definitions:
+  app_auth-service_internal_common.ResponseAuth:
+    properties:
+      message:
+        type: string
+      session_jwt:
+        type: string
+    type: object
+  app_auth-service_internal_model.Users:
+    properties:
+      createdAt:
+        type: string
+      deletedAt:
+        $ref: '#/definitions/gorm.DeletedAt'
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+      updatedAt:
+        type: string
+      userUUID:
+        type: string
+    type: object
+  gorm.DeletedAt:
+    properties:
+      time:
+        type: string
+      valid:
+        description: Valid is true if Time is not NULL
+        type: boolean
+    type: object
+  internal_auth.RequestConfirm:
+    properties:
+      code:
+        maximum: 999999
+        minimum: 100000
+        type: integer
+      new_password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    required:
+    - code
+    type: object
+  internal_auth.RequestLogin:
+    properties:
+      email:
+        type: string
+      password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_auth.RequestRecovery:
+    properties:
+      email:
+        type: string
+      password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    required:
+    - email
+    type: object
+  internal_auth.RequestRefreshLogout:
+    properties:
+      refresh_jwt:
+        type: string
+    required:
+    - refresh_jwt
+    type: object
+  internal_auth.RequestRegister:
+    properties:
+      email:
+        type: string
+      name:
+        maxLength: 64
+        minLength: 2
+        type: string
+      password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    required:
+    - email
+    - name
+    - password
+    type: object
+  internal_auth.ResponseConfirm:
+    properties:
+      access_jwt:
+        type: string
+      refresh_jwt:
+        type: string
+    type: object
+  internal_user.RequestConfirm:
+    properties:
+      code:
+        maximum: 999999
+        minimum: 100000
+        type: integer
+      refresh_jwt:
+        type: string
+    required:
+    - code
+    type: object
+  internal_user.RequestRemoveUser:
+    properties:
+      email:
+        type: string
+      password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_user.RequestUpdateUser:
+    properties:
+      email:
+        type: string
+      new_email:
+        type: string
+      new_name:
+        maxLength: 64
+        minLength: 2
+        type: string
+      new_password:
+        maxLength: 24
+        minLength: 8
+        type: string
+      password:
+        maxLength: 24
+        minLength: 8
+        type: string
+    type: object
+  internal_user.ResponseUser:
+    properties:
+      createdAt:
+        type: string
+      email:
+        type: string
+      name:
+        type: string
+      updatedAt:
+        type: string
+      userUUID:
+        type: string
+    type: object
+  response.NegativeResponse:
+    properties:
+      errors:
+        type: object
+      success:
+        example: false
+        type: boolean
+    type: object
+  response.Response:
+    properties:
+      data: {}
+      errors:
+        additionalProperties:
+          type: string
+        type: object
+      success:
+        type: boolean
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Core authentication and identity service with token rotation, profile
+    management, and sliding window rate limiting.
+  title: Auth & User Microservice API
+  version: "1.0"
+paths:
+  /confirm:
+    post:
+      consumes:
+      - application/json
+      description: Verifies the 6-digit OTP code against the active Redis session.
+        If valid, completes the requested action (creates user, updates password,
+        or activates profile) and issues session tokens.
+      parameters:
+      - description: Bearer <session_token> (Validated via Session Middleware)
+        in: header
+        name: X-Session-Token
+        required: true
+        type: string
+      - description: 'Workflow action: register, login, recovery_user, or recovery_password'
+        in: query
+        name: action
+        required: true
+        type: string
+      - description: Confirmation payload (NewPassword is required only for recovery_password)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestConfirm'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Successfully created (for action=register) or successfully
+            processed (200 OK for other actions)
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_auth.ResponseConfirm'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"code\":
+            \"the code must be 6 characters\" } } or { \"errors\": { \"action\": \"the
+            action must be register, login or recovery\" } } or { \"errors\": { \"session\":
+            \"incorrect session id\" } } or { \"errors\": { \"user\": \"user already
+            exist\" } } or { \"errors\": { \"new_password\": \"new password not specified\"
+            } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Authentication or session errors. Format: { \"errors\": {
+            \"auth\": \"invalid session token\" } } or { \"errors\": { \"auth\": \"authorization
+            session has expired or does not exist\" } } or { \"errors\": { \"auth\":
+            \"incorrect code\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "404":
+          description: 'Data errors. Format: { \"errors\": { \"user\": \"not found
+            user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to ensure security\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Confirm OTP code for registration, login or recovery
+      tags:
+      - auth
+  /login:
+    post:
+      consumes:
+      - application/json
+      description: Verifies credentials using bcrypt against PostgreSQL and issues
+        a secure session token pair via internal workflow.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestLogin'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Authentication accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_common.ResponseAuth'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Validation errors. Format: { \"errors\": { \"email\": \"incorrect
+            email\" } } or { \"errors\": { \"password\": \"password must be between
+            8 and 24 characters\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Incorrect credentials. Format: { \"errors\": { \"auth\": \"incorrect
+            password or email\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to ensure security\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Authenticate user
+      tags:
+      - auth
+  /logout:
+    post:
+      consumes:
+      - application/json
+      description: Parses the refresh token from request body, extracts session UUID,
+        and safely deletes the active session from Redis.
+      parameters:
+      - description: Logout payload containing refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestRefreshLogout'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Session successfully invalidated, no content returned
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"refresh_token\":
+            \"refresh token not sent\" } } or { \"errors\": { \"body\": \"invalid
+            json format\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Logout user and invalidate session
+      tags:
+      - auth
+  /recovery:
+    post:
+      consumes:
+      - application/json
+      description: Initiates recovery process (recovery_password or recovery_user)
+        via email verification. For account recovery, requires active password validation.
+      parameters:
+      - description: 'Type of recovery: recovery_password or recovery_user'
+        in: query
+        name: action
+        required: true
+        type: string
+      - description: Recovery payload (Password is required only for recovery_user)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestRecovery'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Recovery process accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_common.ResponseAuth'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"email\":
+            \"incorrect email\" } } or { \"errors\": { \"action\": \"action must be
+            recovery_password or recovery_user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Authentication errors. Format: { \"errors\": { \"auth\": \"password
+            is empty\" } } or { \"errors\": { \"auth\": \"incorrect password or email\"
+            } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "404":
+          description: 'Data errors. Format: { \"errors\": { \"email\": \"not found
+            user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to ensure security\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Recover user account or password
+      tags:
+      - auth
+  /refresh:
+    post:
+      consumes:
+      - application/json
+      description: Parses old appjwt refresh token from body, validates session UUID
+        and User-Agent in Redis, and performs safe Token Rotation using WATCH locking.
+      parameters:
+      - description: Refresh token payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestRefreshLogout'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tokens successfully rotated
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_auth.ResponseConfirm'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"refresh_jwt\":
+            \"refresh token not sent\" } } or { \"errors\": { \"body\": \"invalid
+            json format\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Token or session expired errors. Format: { \"errors\": { \"refresh_token\":
+            \"refresh token renewal error\" } } or { \"errors\": { \"refresh_token\":
+            \"session has expired try again later\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Rotate refresh token
+      tags:
+      - auth
+  /register:
+    post:
+      consumes:
+      - application/json
+      description: Validates name length, strong password policy, and email uniqueness
+        before triggering internal registration workflow.
+      parameters:
+      - description: Registration payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_auth.RequestRegister'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: User registration process accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_common.ResponseAuth'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"name\":
+            \"name must be between 2 and 64 characters\" } } or { \"errors\": { \"email\":
+            \"incorrect email\" } } or { \"errors\": { \"password\": \"password must
+            be between 8 and 24 characters\" } } or { \"errors\": { \"user\": \"user
+            already exist\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to ensure security\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /user:
+    delete:
+      consumes:
+      - application/json
+      description: Validates user credentials and the deletion type. If criteria are
+        met, generates a confirmation session in Redis and triggers 2FA workflow (returns
+        202 Accepted).
+      parameters:
+      - description: Bearer <access_token>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 'Type of deletion: soft-delete or hard-delete'
+        in: query
+        name: type
+        required: true
+        type: string
+      - description: Account credentials payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_user.RequestRemoveUser'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Deletion request accepted, 2FA confirmation workflow initiated
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_common.ResponseAuth'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Client validation errors. Format: { \"errors\": { \"email\":
+            \"incorrect email\" } } or { \"errors\": { \"action\": \"the type  must
+            be a soft-delete or hard-delete\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Authentication errors. Format: { \"errors\": { \"auth\": \"incorrect
+            password or email\" } } or { \"errors\": { \"auth\": \"invalid access
+            token\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to remove user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Initiate account deletion workflow
+      tags:
+      - user
+    get:
+      description: Retrieves current authenticated user's profile details from MySQL
+        by UUID stored in appjwt access token.
+      parameters:
+      - description: Bearer <access_token>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User profile details successfully retrieved
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_user.ResponseUser'
+                errors:
+                  type: object
+              type: object
+        "401":
+          description: 'Token errors. Format: { \"errors\": { \"auth\": \"invalid
+            access token\" } } or { \"errors\": { \"auth\": \"access token has expired\"
+            } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "404":
+          description: 'Data errors. Format: { \"errors\": { \"user\": \"not found
+            user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to get user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Get user profile
+      tags:
+      - user
+    patch:
+      consumes:
+      - application/json
+      description: Updates public info directly (returns 200 OK). If updating sensitive
+        info (email/password), requires current password and triggers 2FA workflow
+        (returns 202 Accepted).
+      parameters:
+      - description: Bearer <access_token>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Profile update payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_user.RequestUpdateUser'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Public profile details successfully updated instantly
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_model.Users'
+                errors:
+                  type: object
+              type: object
+        "202":
+          description: Sensitive update accepted, 2FA confirmation workflow initiated
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/app_auth-service_internal_common.ResponseAuth'
+                errors:
+                  type: object
+              type: object
+        "400":
+          description: 'Validation or business logic errors. Format: { \"errors\":
+            { \"new_name\": \"new name must be between 2 and 64 characters\" } } or
+            { \"errors\": { \"new_password\": \"the new_password cannot  contain email\"
+            } } or { \"errors\": { \"email\": \"either a new email or an old one must
+            be present\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Authentication errors. Format: { \"errors\": { \"auth\": \"incorrect
+            password or email\" } } or { \"errors\": { \"auth\": \"invalid access
+            token\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "404":
+          description: 'Data errors. Format: { \"errors\": { \"user\": \"not found
+            user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"critical
+            error on the server side\" } } or { \"errors\": { \"global\": \"failed
+            to update user\" } } or { \"errors\": { \"global\": \"failed to ensure
+            security\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Update user profile data or trigger sensitive update workflow
+      tags:
+      - user
+  /user/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Validates the 6-digit OTP code from Redis session. For updates,
+        applies changes to MySQL and returns user data (200 OK). For hard/soft deletion,
+        purges sessions, publishes to Kafka, and returns no content (204 No Content).
+      parameters:
+      - description: Bearer <access_token>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 'Workflow action: update, soft-delete, or hard-delete'
+        in: query
+        name: action
+        required: true
+        type: string
+      - description: Confirmation payload storing 6-digit code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_user.RequestConfirm'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sensitive profile details successfully updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_user.ResponseUser'
+                errors:
+                  type: object
+              type: object
+        "204":
+          description: Account successfully deleted (soft or hard), no content returned
+        "400":
+          description: 'Client validation or workflow errors. Format: { \"errors\":
+            { \"auth\": \"the code must be 6 characters\" } } or { \"errors\": { \"action\":
+            \"the action must be update, soft-delete or hard-delete\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "401":
+          description: 'Authentication or session errors. Format: { \"errors\": {
+            \"auth\": \"invalid access token\" } } or { \"errors\": { \"auth\": \"refresh
+            token has expired\" } } or { \"errors\": { \"auth\": \"incorrect refresh
+            token\" } } or { \"errors\": { \"auth\": \"refresh token renewal error\"
+            } } or { \"errors\": { \"auth\": \"incorrect session id\" } } or { \"errors\":
+            { \"auth\": \"authorization session has expired or does not exist\" }
+            } or { \"errors\": { \"auth\": \"incorrect code\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "404":
+          description: 'Data errors. Format: { \"errors\": { \"user\": \"not found
+            user\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "429":
+          description: 'Too many requests. Format: { \"errors\": { \"global\": \"the
+            limit for sending requests per minute has been exceeded\" } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+        "500":
+          description: 'Server errors. Format: { \"errors\": { \"global\": \"failed
+            to update user\" } } or { \"errors\": { \"global\": \"failed to delete
+            user\" } } or { \"errors\": { \"global\": \"failed to remove user\" }
+            } or { \"errors\": { \"global\": \"critical error on the server side\"
+            } }'
+          schema:
+            $ref: '#/definitions/response.NegativeResponse'
+      summary: Confirm 2FA code for profile updates or account deletion
+      tags:
+      - user
+swagger: "2.0"
+tags:
+- description: User registration, authentication, and session management
+  name: auth
+- description: Profile management, account data retrieval, and user deletion logs
+  name: user

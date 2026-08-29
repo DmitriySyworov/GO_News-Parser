@@ -1,0 +1,43 @@
+{{- range .Values.cronJobServices }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .name }}-cron
+  labels:
+    app: {{ .name }}
+    component: cron
+spec:
+   schedule: {{ .start }}
+   concurrencyPolicy: Forbid
+   successfulJobsHistoryLimit: 3
+   failedJobsHistoryLimit: 5
+   jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: {{ .name }}
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: {{ .name }}
+              image: "{{ .image }}:{{ index $.Values.versions  .version}}"
+              imagePullPolicy: Always
+              command: {{ .command }}
+              envFrom:
+              - secretRef:
+                  name: {{ .secretName }}
+              {{- if .configName }}
+              - configMapRef:
+                  name: {{ .configName }}
+                  {{- end }}
+          resources:
+           requests:
+            memory: "64Mi"
+            cpu: "50m"
+           limits:
+            memory: "128Mi"
+            cpu: "200m"
+---
+{{- end}}

@@ -1,0 +1,8 @@
+go 1.25.7
+
+use (
+	./services/auth
+	./services/gatewaydocs
+	./services/notification
+	./shared
+)
